@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 '''
 Lookup SMPT TLS policy published by email domains passed on the command line
 Output:
