@@ -30,9 +30,11 @@ def validmx(mx):
         
 def lookupmx(d):
     '''
-    Return list of valid MX domains, ordered by priority (and alphabetically)
+    Return list of valid MX domains, ordered by priority (and alphabetically) and
+    if the list is empty an error text detailing why.
     '''
     mxs = []
+    error = ''
     try:
         answer = dns.resolver.resolve(d, "MX")
         # sort records by name to make mxs canonical
@@ -40,30 +42,38 @@ def lookupmx(d):
         # sort preferred MX first
         records = sorted(records, key=lambda r: r.preference)
         # convert bytes to str
-        mxs = [ r.exchange.to_unicode().lower() for r in records ]
+        mxsunfiltered = [ r.exchange.to_unicode().lower() for r in records ]
         # remove invalid MX
-        mxs = list(filter(validmx, mxs))
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
-        pass
-    except (dns.resolver.LifetimeTimeout) as e:
-        print(f";; {d}: {e}", file=sys.stderr)
-    return mxs
+        mxs = list(filter(validmx, mxsunfiltered))
+        if len(mxs) == 0:
+            error = "no valid MX: " + ", ".join(mxsunfiltered)
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
+        error = str(e)
+    return mxs, error
 
 def lookupdane(d, mxs):
     '''
     Lookup SMTP DANE TLSA records for MX domains in mxs
-    Return first domain and TLSA record found 
+    Return
+        1, TLSA record
+        or
+        0, error
     '''
+    error = ''
     for mx in mxs:
         try:
             answer = dns.resolver.resolve("_25._tcp." + mx, "TLSA")
             dane = "\n".join([ str(r) for r in answer ])
-            return mx, dane
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
-            pass
-        except (dns.resolver.LifetimeTimeout) as e:
-           print(f";; {d}: {e}", file=sys.stderr)
-    return "", ""
+            return 1, dane
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
+           error = str(e)
+    return 0, error
+
+def indicator(b):
+    if (b):
+        return 1
+    else:
+        return 0
     
 def is_sts(s):
     '''
@@ -73,7 +83,8 @@ def is_sts(s):
 
 def lookupsts(d):
     '''
-    Return valid looking MTA STS TXT records for domain d, separated by newline
+    Return (1, valid looking MTA STS TXT records for domain d, separated by newline)
+    or (0, error details)
     '''
     txts = []
     try:
@@ -82,35 +93,28 @@ def lookupsts(d):
         txts = [ b''.join(r.strings).decode() for r in answer ]
         # filter for v=STSv1
         txts = [ t for t in txts if is_sts(t) ]
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
-        pass
-    except (dns.resolver.LifetimeTimeout) as e:
-        print(f";; {d}: {e}", file=sys.stderr)
-    if len(txts) > 1: print(f";; {d} has {len(txts)} MTA STS records", file=sys.stderr)
-    return '\n'.join(txts)
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
+        return 0, str(e)
+    return indicator(len(txts)), '\n'.join(txts)
 
-def indicator(s):
-    if (s):
-        return 1
-    else:
-        return 0
-    
+
 def lookupdomain(d):
     '''
     Print CSV record for domain d
     '''
-    mxs = lookupmx(d)
+    mxs, mxerror = lookupmx(d)
     if (len(mxs) == 0):
-        return # filter out domains without email service (no or invalid MX)
-    _, dane = lookupdane(d, mxs)
-    mx = "\n".join(mxs)
-    sts = lookupsts(d)
-    print(f'{d},{indicator(dane)},{indicator(sts)},{indicator(dane or sts)},"{mx}","{dane}","{sts}"')
+        mxdetails = mxerror
+    else:
+        mxdetails = "\n".join(mxs)
+    daneflag, danedetails = lookupdane(d, mxs)
+    stsflag, stsdetails = lookupsts(d)
+    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
 
 if __name__ == '__main__':
     try:
-        if (len(sys.argv) == 1):
-            print("domain,has_smtpdane,has_mtasts,has_any,mx_records,smtpdane_records,mtasts_records")
+        if len(sys.argv) == 1:
+            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_details,smtpdane_details,mtasts_details")
         for d in sys.argv[1:]:
             lookupdomain(d)
     except KeyboardInterrupt:
