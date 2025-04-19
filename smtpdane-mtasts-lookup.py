@@ -28,7 +28,7 @@ def validmx(mx):
         case _:
             return True
         
-def lookupmx(d):
+def lookupmx(resolver, d):
     '''
     Return list of valid MX domains, ordered by priority (and alphabetically) and
     if the list is empty an error text detailing why.
@@ -36,7 +36,8 @@ def lookupmx(d):
     mxs = []
     error = ''
     try:
-        answer = dns.resolver.resolve(d, "MX")
+        answer = resolver.resolve(d, "MX")
+        #print(bool(answer.response.flags & dns.flags.AD))
         # sort records by name to make mxs canonical
         records = sorted(answer, key=lambda r: r.exchange.to_unicode().lower())
         # sort preferred MX first
@@ -51,7 +52,7 @@ def lookupmx(d):
         error = str(e)
     return mxs, error
 
-def lookupdane(d, mxs):
+def lookupdane(resolver, mxs):
     '''
     Lookup SMTP DANE TLSA records for MX domains in mxs
     Return
@@ -62,7 +63,7 @@ def lookupdane(d, mxs):
     error = ''
     for mx in mxs:
         try:
-            answer = dns.resolver.resolve("_25._tcp." + mx, "TLSA")
+            answer = resolver.resolve("_25._tcp." + mx, "TLSA")
             dane = "\n".join([ str(r) for r in answer ])
             return 1, dane
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
@@ -81,14 +82,14 @@ def is_sts(s):
     '''
     return s.lower().startswith('v=stsv1')
 
-def lookupsts(d):
+def lookupsts(resolver, d):
     '''
     Return (1, valid looking MTA STS TXT records for domain d, separated by newline)
     or (0, error details)
     '''
     txts = []
     try:
-        answer = dns.resolver.resolve("_mta-sts." + d, "TXT")
+        answer = resolver.resolve("_mta-sts." + d, "TXT")
         # r.strings is a tuple of bytes as per RFC1035, which we concatenate
         txts = [ b''.join(r.strings).decode() for r in answer ]
         # filter for v=STSv1
@@ -97,25 +98,30 @@ def lookupsts(d):
         return 0, str(e)
     return indicator(len(txts)), '\n'.join(txts)
 
-
-def lookupdomain(d):
+def lookupdomain(resolver, d):
     '''
     Print CSV record for domain d
     '''
-    mxs, mxerror = lookupmx(d)
+    mxs, mxerror = lookupmx(resolver, d)
     if (len(mxs) == 0):
         mxdetails = mxerror
     else:
         mxdetails = "\n".join(mxs)
-    daneflag, danedetails = lookupdane(d, mxs)
-    stsflag, stsdetails = lookupsts(d)
+    daneflag, danedetails = lookupdane(resolver, mxs)
+    stsflag, stsdetails = lookupsts(resolver, d)
     print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
 
 if __name__ == '__main__':
+    resolver = dns.resolver.Resolver()
+    #resolver.nameservers = ['8.8.8.8']
+    resolver.timeout = 20
+    resolver.lifetime = 60 # number of seconds to spend trying to get an answer to the question
+    resolver.retry_servfail = True
+    resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
     try:
         if len(sys.argv) == 1:
             print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_details,smtpdane_details,mtasts_details")
-        for d in sys.argv[1:]:
-            lookupdomain(d)
+        for domain in sys.argv[1:]:
+            lookupdomain(resolver, domain)
     except KeyboardInterrupt:
         pass
