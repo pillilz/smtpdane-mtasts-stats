@@ -35,10 +35,11 @@ def lookupmx(resolver, d):
     if the list is empty an error text detailing why.
     '''
     mxs = []
+    authenticated = False
     error = ''
     try:
         answer = resolver.resolve(d, "MX")
-        #print(bool(answer.response.flags & dns.flags.AD))
+        authenticated = (answer.response.flags & dns.flags.AD) != 0
         # sort records by name to make mxs canonical
         records = sorted(answer, key=lambda r: r.exchange.to_unicode().lower())
         # sort preferred MX first
@@ -51,7 +52,7 @@ def lookupmx(resolver, d):
             error = "no valid MX: " + ", ".join(mxsunfiltered)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
         error = str(e)
-    return mxs, error
+    return mxs, authenticated, error
 
 def lookupdane(resolver, mxs):
     '''
@@ -103,14 +104,39 @@ def lookupdomain(resolver, d):
     '''
     Print CSV record for domain d
     '''
-    mxs, mxerror = lookupmx(resolver, d)
+    mxs, mxauth, mxerror = lookupmx(resolver, d)
     if (len(mxs) == 0):
         mxdetails = mxerror
     else:
         mxdetails = "\n".join(mxs)
     daneflag, danedetails = lookupdane(resolver, mxs)
     stsflag, stsdetails = lookupsts(resolver, d)
-    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
+    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},{indicator(mxauth)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
+
+def parse_args(resolver):
+    argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
+                                        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    argparser.add_argument('domains', nargs='*',
+                           help='domais to check')
+    argparser.add_argument('-t', '--timeout', type=int, default=resolver.timeout,
+                           help='number of seconds to wait for nameserver response (default: %(default)d)')
+    argparser.add_argument('-l', '--lifetime', type=int, default=resolver.lifetime,
+                           help='number of seconds to spend trying to get an answer to the question (default: %(default)d)')
+    argparser.add_argument('-r', '--retry', action=argparse.BooleanOptionalAction, default=False,
+                           help='retry on SERVFAIL (default: no retry)')
+    argparser.add_argument('-H', '--header', action=argparse.BooleanOptionalAction,
+                           help='print CSV header (default: no header)')
+    argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
+                           help='use custom nameserver, repeat to add multiple')
+    return argparser.parse_args()
+
+def configure_resolver(resolver, args):
+    if args.nameserver:
+        resolver.nameservers = args.nameserver
+    resolver.timeout = args.timeout
+    resolver.lifetime = args.lifetime
+    resolver.retry_servfail = args.retry
+    resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
 
 def parse_args(resolver):
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
@@ -143,7 +169,7 @@ if __name__ == '__main__':
     configure_resolver(resolver, args)
     try:
         if args.header:
-            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_details,smtpdane_details,mtasts_details")
+            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_auth,mx_details,smtpdane_details,mtasts_details")
         for domain in args.domains:
             lookupdomain(resolver, domain)
     except KeyboardInterrupt:
