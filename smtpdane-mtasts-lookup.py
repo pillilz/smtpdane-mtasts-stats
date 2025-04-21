@@ -35,10 +35,11 @@ def lookupmx(resolver, d):
     if the list is empty an error text detailing why.
     '''
     mxs = []
+    authenticated = False
     error = ''
     try:
         answer = resolver.resolve(d, "MX")
-        #print(bool(answer.response.flags & dns.flags.AD))
+        authenticated = (answer.response.flags & dns.flags.AD) != 0
         # sort records by name to make mxs canonical
         records = sorted(answer, key=lambda r: r.exchange.to_unicode().lower())
         # sort preferred MX first
@@ -51,7 +52,7 @@ def lookupmx(resolver, d):
             error = "no valid MX: " + ", ".join(mxsunfiltered)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
         error = str(e)
-    return mxs, error
+    return mxs, authenticated, error
 
 def lookupdane(resolver, mxs):
     '''
@@ -103,14 +104,14 @@ def lookupdomain(resolver, d):
     '''
     Print CSV record for domain d
     '''
-    mxs, mxerror = lookupmx(resolver, d)
+    mxs, mxauth, mxerror = lookupmx(resolver, d)
     if (len(mxs) == 0):
         mxdetails = mxerror
     else:
         mxdetails = "\n".join(mxs)
     daneflag, danedetails = lookupdane(resolver, mxs)
     stsflag, stsdetails = lookupsts(resolver, d)
-    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
+    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},{indicator(mxauth)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
 
 def parse_args(resolver):
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
@@ -140,11 +141,10 @@ def configure_resolver(resolver, args):
 if __name__ == '__main__':
     resolver = dns.resolver.Resolver()
     args = parse_args(resolver)
-    print(args.retry)
     configure_resolver(resolver, args)
     try:
         if args.header:
-            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_details,smtpdane_details,mtasts_details")
+            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_auth,mx_details,smtpdane_details,mtasts_details")
         for domain in args.domains:
             lookupdomain(resolver, domain)
     except KeyboardInterrupt:
