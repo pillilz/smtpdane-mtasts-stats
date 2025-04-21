@@ -2,7 +2,7 @@
 '''
 Lookup SMPT TLS policy published by email domains passed on the command line
 Output:
-- CSV header if called without arguments
+- CSV header if called with --header
 - CSV lines for each domain publishing an MX valid record:
   - domain: domain from command line arguments
   - has_smtpdane: 1 if a TLSA record is published for _25._tcp.<domain>, 0 otherwise
@@ -15,6 +15,7 @@ Output:
 '''
 import sys
 import dns.resolver
+import argparse
 
 def validmx(mx):
     '''
@@ -111,17 +112,40 @@ def lookupdomain(resolver, d):
     stsflag, stsdetails = lookupsts(resolver, d)
     print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
 
+def parse_args(resolver):
+    argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
+                                        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    argparser.add_argument('domains', nargs='*',
+                           help='domais to check')
+    argparser.add_argument('-t', '--timeout', type=int, default=resolver.timeout,
+                           help='number of seconds to wait for nameserver response (default: %(default)d)')
+    argparser.add_argument('-l', '--lifetime', type=int, default=resolver.lifetime,
+                           help='number of seconds to spend trying to get an answer to the question (default: %(default)d)')
+    argparser.add_argument('-r', '--retry', action=argparse.BooleanOptionalAction, default=False,
+                           help='retry on SERVFAIL (default: no retry)')
+    argparser.add_argument('-H', '--header', action=argparse.BooleanOptionalAction,
+                           help='print CSV header (default: no header)')
+    argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
+                           help='use custom nameserver, repeat to add multiple')
+    return argparser.parse_args()
+
+def configure_resolver(resolver, args):
+    if args.nameserver:
+        resolver.nameservers = args.nameserver
+    resolver.timeout = args.timeout
+    resolver.lifetime = args.lifetime
+    resolver.retry_servfail = args.retry
+    resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
+
 if __name__ == '__main__':
     resolver = dns.resolver.Resolver()
-    #resolver.nameservers = ['8.8.8.8']
-    resolver.timeout = 20
-    resolver.lifetime = 60 # number of seconds to spend trying to get an answer to the question
-    resolver.retry_servfail = True
-    resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
+    args = parse_args(resolver)
+    print(args.retry)
+    configure_resolver(resolver, args)
     try:
-        if len(sys.argv) == 1:
+        if args.header:
             print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_details,smtpdane_details,mtasts_details")
-        for domain in sys.argv[1:]:
+        for domain in args.domains:
             lookupdomain(resolver, domain)
     except KeyboardInterrupt:
         pass
