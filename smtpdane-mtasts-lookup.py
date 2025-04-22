@@ -8,6 +8,7 @@ Output:
   - has_smtpdane: 1 if a TLSA record is published for _25._tcp.<domain>, 0 otherwise
   - has_mtasts: 1 if a "v=STSv1..." TXT record is published for _mta-sts.<domain> 
   - has_any: has_smtpdane or has_mtasts
+  - mx_auth: MX record lookup authenticated with DNSSEC (by the nameserver)
   - mx_records: published valid MX ordered by priority, separate by newline
   - smtpdane_records: published SMTP DANE TLSA records, separate by newline
   - mtasts_records: published MTA STS TXT records, separate by newline
@@ -21,7 +22,7 @@ def validmx(mx):
     '''
     Return False for MX records that do not represent a SMTP server:
     - .:  Null MX as defined in RFC 7505 meaning that the domain doesn't accept any email.
-    - 0.0.0.0. and localhost.: Sometimes used in indicate the same as
+    - 0.0.0.0. and localhost.: Sometimes used in indicate the same as .
     '''
     match mx:
         case '.' | '0.0.0.0.' | 'localhost.':
