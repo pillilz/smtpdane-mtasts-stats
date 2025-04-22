@@ -30,7 +30,7 @@ def validmx(mx):
         case _:
             return True
         
-def lookupmx(resolver, d):
+def lookupmx(resolver, domain):
     '''
     Return list of valid MX domains, ordered by priority (and alphabetically) and
     if the list is empty an error text detailing why.
@@ -39,7 +39,7 @@ def lookupmx(resolver, d):
     authenticated = False
     error = ''
     try:
-        answer = resolver.resolve(d, "MX")
+        answer = resolver.resolve(domain, "MX")
         authenticated = (answer.response.flags & dns.flags.AD) != 0
         # sort records by name to make mxs canonical
         records = sorted(answer, key=lambda r: r.exchange.to_unicode().lower())
@@ -55,7 +55,7 @@ def lookupmx(resolver, d):
         error = str(e)
     return mxs, authenticated, error
 
-def lookupdane(resolver, mxs):
+def lookupdane(resolver, mxs, delimiter):
     '''
     Lookup SMTP DANE TLSA records for MX domains in mxs
     Return
@@ -67,7 +67,7 @@ def lookupdane(resolver, mxs):
     for mx in mxs:
         try:
             answer = resolver.resolve("_25._tcp." + mx, "TLSA")
-            dane = "\n".join([ str(r) for r in answer ])
+            dane = delimiter.join([ str(r) for r in answer ])
             return 1, dane
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
            error = str(e)
@@ -79,40 +79,40 @@ def indicator(b):
     else:
         return 0
     
-def is_sts(s):
+def is_sts(txt):
     '''
     Return True if s looks like a MSA STS TXT record without validating it
     '''
-    return s.lower().startswith('v=stsv1')
+    return txt.lower().startswith('v=stsv1')
 
-def lookupsts(resolver, d):
+def lookupsts(resolver, domain, delimiter):
     '''
     Return (1, valid looking MTA STS TXT records for domain d, separated by newline)
     or (0, error details)
     '''
     txts = []
     try:
-        answer = resolver.resolve("_mta-sts." + d, "TXT")
+        answer = resolver.resolve("_mta-sts." + domain, "TXT")
         # r.strings is a tuple of bytes as per RFC1035, which we concatenate
         txts = [ b''.join(r.strings).decode() for r in answer ]
         # filter for v=STSv1
         txts = [ t for t in txts if is_sts(t) ]
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
         return 0, str(e)
-    return indicator(len(txts)), '\n'.join(txts)
+    return indicator(len(txts)), delimiter.join(txts)
 
-def lookupdomain(resolver, d):
+def lookupdomain(resolver, domain, delimiter):
     '''
     Print CSV record for domain d
     '''
-    mxs, mxauth, mxerror = lookupmx(resolver, d)
+    mxs, mxauth, mxerror = lookupmx(resolver, domain)
     if (len(mxs) == 0):
         mxdetails = mxerror
     else:
-        mxdetails = "\n".join(mxs)
-    daneflag, danedetails = lookupdane(resolver, mxs)
-    stsflag, stsdetails = lookupsts(resolver, d)
-    print(f'{d},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},{indicator(mxauth)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
+        mxdetails = delimiter.join(mxs)
+    daneflag, danedetails = lookupdane(resolver, mxs, delimiter)
+    stsflag, stsdetails = lookupsts(resolver, domain, delimiter)
+    print(f'{domain},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},{indicator(mxauth)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
 
 def parse_args(resolver):
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
@@ -131,12 +131,12 @@ def parse_args(resolver):
                            help='use custom nameserver, repeat to add multiple')
     return argparser.parse_args()
 
-def configure_resolver(resolver, args):
-    if args.nameserver:
-        resolver.nameservers = args.nameserver
-    resolver.timeout = args.timeout
-    resolver.lifetime = args.lifetime
-    resolver.retry_servfail = args.retry
+def configure_resolver(resolver, opts):
+    if opts.nameserver:
+        resolver.nameservers = opts.nameserver
+    resolver.timeout = opts.timeout
+    resolver.lifetime = opts.lifetime
+    resolver.retry_servfail = opts.retry
     resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
 
 def parse_args(resolver):
@@ -152,26 +152,31 @@ def parse_args(resolver):
                            help='retry on SERVFAIL (default: no retry)')
     argparser.add_argument('-H', '--header', action=argparse.BooleanOptionalAction,
                            help='print CSV header (default: no header)')
-    argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
+    #argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
+    argparser.add_argument('-s', '--nameserver', type=str, action='append',
                            help='use custom nameserver, repeat to add multiple')
-    return argparser.parse_args()
+    argparser.add_argument('-d', '--delimiter', type=str, default='\\n',
+                           help='delimiter string used to concatenate records (default: %(default)s)')
+    opts = argparser.parse_args()
+    opts.delimiter = bytes(opts.delimiter, 'utf-8').decode('unicode_escape') # https://docs.python.org/3/library/codecs.html#python-specific-encodings
+    return opts
 
-def configure_resolver(resolver, args):
-    if args.nameserver:
-        resolver.nameservers = args.nameserver
-    resolver.timeout = args.timeout
-    resolver.lifetime = args.lifetime
-    resolver.retry_servfail = args.retry
+def configure_resolver(resolver, opts):
+    if opts.nameserver:
+        resolver.nameservers = opts.nameserver
+    resolver.timeout = opts.timeout
+    resolver.lifetime = opts.lifetime
+    resolver.retry_servfail = opts.retry
     resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
 
 if __name__ == '__main__':
     resolver = dns.resolver.Resolver()
-    args = parse_args(resolver)
-    configure_resolver(resolver, args)
+    opts = parse_args(resolver)
+    configure_resolver(resolver, opts)
     try:
-        if args.header:
+        if opts.header:
             print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_auth,mx_details,smtpdane_details,mtasts_details")
-        for domain in args.domains:
-            lookupdomain(resolver, domain)
+        for domain in opts.domains:
+            lookupdomain(resolver, domain, opts.delimiter)
     except KeyboardInterrupt:
         pass
