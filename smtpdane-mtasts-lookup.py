@@ -127,32 +127,6 @@ def parse_args(resolver):
                            help='retry on SERVFAIL (default: no retry)')
     argparser.add_argument('-H', '--header', action=argparse.BooleanOptionalAction,
                            help='print CSV header (default: no header)')
-    argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
-                           help='use custom nameserver, repeat to add multiple')
-    return argparser.parse_args()
-
-def configure_resolver(resolver, opts):
-    if opts.nameserver:
-        resolver.nameservers = opts.nameserver
-    resolver.timeout = opts.timeout
-    resolver.lifetime = opts.lifetime
-    resolver.retry_servfail = opts.retry
-    resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
-
-def parse_args(resolver):
-    argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
-                                        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    argparser.add_argument('domains', nargs='*',
-                           help='domais to check')
-    argparser.add_argument('-t', '--timeout', type=int, default=resolver.timeout,
-                           help='number of seconds to wait for nameserver response (default: %(default)d)')
-    argparser.add_argument('-l', '--lifetime', type=int, default=resolver.lifetime,
-                           help='number of seconds to spend trying to get an answer to the question (default: %(default)d)')
-    argparser.add_argument('-r', '--retry', action=argparse.BooleanOptionalAction, default=False,
-                           help='retry on SERVFAIL (default: no retry)')
-    argparser.add_argument('-H', '--header', action=argparse.BooleanOptionalAction,
-                           help='print CSV header (default: no header)')
-    #argparser.add_argument('-s', '--nameserver', type=str, nargs=1, action='extend',
     argparser.add_argument('-s', '--nameserver', type=str, action='append',
                            help='use custom nameserver, repeat to add multiple')
     argparser.add_argument('-d', '--delimiter', type=str, default='\\n',
