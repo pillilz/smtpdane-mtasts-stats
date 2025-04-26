@@ -32,14 +32,18 @@ def validmx(mx):
         
 def lookupmx(resolver, domain):
     '''
-    Return list of valid MX domains, ordered by priority (and alphabetically) and
-    if the list is empty an error text detailing why.
+    Return a tuple consiting of
+    - list of valid MX domains, ordered by priority (and alphabetically), removing invalid MX
+    - authenticated flag, True if AD flag ist present in the response
+    - error details of failed resolver lookup or the removed MXs if all are invalid
     '''
     mxs = []
     authenticated = False
     error = ''
     try:
         answer = resolver.resolve(domain, "MX")
+        # the Answer class calls resolve_chaining to resolves up to dns.message.MAX_CHAIN (16) CNAME pointers in the response
+        # AFAIU the AD flag applies to the response including all CNAME and records 
         authenticated = (answer.response.flags & dns.flags.AD) != 0
         # sort records by name to make mxs canonical
         records = sorted(answer, key=lambda r: r.exchange.to_unicode().lower())
