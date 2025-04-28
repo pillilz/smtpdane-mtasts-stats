@@ -59,22 +59,21 @@ def lookupmx(resolver, domain):
         error = str(e)
     return mxs, authenticated, error
 
-def lookupdane(resolver, mxs, delimiter):
+def lookuptlsa(resolver, domain, port, delimiter):
     '''
-    Lookup SMTP DANE TLSA records for MX domains in mxs
+    Lookup TLSA record for domain and port
     Return
-        1, TLSA record
+        1, TLSA records
         or
         0, error
     '''
     error = ''
-    for mx in mxs:
-        try:
-            answer = resolver.resolve("_25._tcp." + mx, "TLSA")
-            dane = delimiter.join([ str(r) for r in answer ])
-            return 1, dane
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
-           error = str(e)
+    try:
+        answer = resolver.resolve(f"_{port}._tcp.{domain}", "TLSA")
+        dane = delimiter.join([ str(r) for r in answer ])
+        return 1, dane
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout) as e:
+        error = str(e)
     return 0, error
 
 def indicator(b):
@@ -110,13 +109,23 @@ def lookupdomain(resolver, domain, delimiter):
     Print CSV record for domain d
     '''
     mxs, mxauth, mxerror = lookupmx(resolver, domain)
-    if (len(mxs) == 0):
-        mxdetails = mxerror
-    else:
+    if (len(mxs) > 0):
         mxdetails = delimiter.join(mxs)
-    daneflag, danedetails = lookupdane(resolver, mxs, delimiter)
+        # lookup TLSA record for the preferred MX https://datatracker.ietf.org/doc/html/rfc7672#section-2.2.1
+        mxtlsaflag, mxtlsadetails = lookuptlsa(resolver, mxs[0], 25, delimiter)  
+    else:
+        mxdetails = mxerror
+        mxtlsaflag, mxtlsadetails = 0, ''
+        # # If `domain` has no MX, but A/AAAA record, then SMTP trys the delivery to that IP
+        # # DANE allows TLSA records for such domains https://datatracker.ietf.org/doc/html/rfc7672#section-2.2.2
+        # # The code below detects the, but couldn't find an instance where this is used in practice  
+        # nonmxtlsaflag, nonmxtlsadetails = lookuptlsa(resolver, domain, 25, delimiter)
+        # if nonmxtlsaflag == 1:
+        #     print(f"{domain}: no MX, but TLSA ({nonmxtlsadetails})", file=sys.stderr)
+    # DANE requires DNSSEC for MX lookup *and* TLSA for MX domain https://datatracker.ietf.org/doc/html/rfc7672#section-2.2.1
+    daneflag = indicator(mxauth and mxtlsaflag)
     stsflag, stsdetails = lookupsts(resolver, domain, delimiter)
-    print(f'{domain},{indicator(len(mxs))},{daneflag},{stsflag},{indicator(daneflag or stsflag)},{indicator(mxauth)},"{mxdetails}","{danedetails}","{stsdetails}"', flush=True)
+    print(f'{domain},{indicator(len(mxs))},{indicator(mxauth)},{mxtlsaflag},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{mxtlsadetails}","{stsdetails}"', flush=True)
 
 def parse_args(resolver):
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
@@ -153,7 +162,7 @@ if __name__ == '__main__':
     configure_resolver(resolver, opts)
     try:
         if opts.header:
-            print("domain,has_mx,has_smtpdane,has_mtasts,has_any,mx_auth,mx_details,smtpdane_details,mtasts_details")
+            print("domain,has_mx,has_mxauth,has_mxtlsa,has_smtpdane,has_mtasts,has_any,mx_details,mxtlsa_details,mtasts_details")
         for domain in opts.domains:
             lookupdomain(resolver, domain, opts.delimiter)
     except KeyboardInterrupt:
