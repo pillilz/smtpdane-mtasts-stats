@@ -5,20 +5,22 @@ Output:
 - CSV header if called with --header
 - CSV lines for each domain publishing an MX valid record:
   - domain: domain from command line arguments
-  - has_smtpdane: 1 if a TLSA record is published for _25._tcp.<domain>, 0 otherwise
-  - has_mtasts: 1 if a "v=STSv1..." TXT record is published for _mta-sts.<domain> 
+  - has_mx: 1 if `domain` has an MX record, 0 otherwise
+  - has_mxauth: 1 if the `domain` MX record lookup was DNSSEC authenticated (by the nameserver), 0 otherwise
+  - has_mxtlsa: 1 if a TLSA record exists for _25._tcp.<preferred MX domain>, 0 otherwise
+  - has_smtpdane: 1 if `has_mxauth`=1 and `hasmxtlsa`=1, 0 otherwise
+  - has_mtasts: 1 if a "v=STSv1..." TXT record is published for _mta-sts.<domain>, 0 otherwise
   - has_any: has_smtpdane or has_mtasts
-  - mx_auth: MX record lookup authenticated with DNSSEC (by the nameserver)
-  - mx_records: published valid MX ordered by priority, separate by newline
-  - smtpdane_records: published SMTP DANE TLSA records, separate by newline
-  - mtasts_records: published MTA STS TXT records, separate by newline
+  - mx_details: published valid MX ordered by priority, separate by `delimiter` or error message if has_mx = 0
+  - mxtlsa_details: published SMTP DANE TLSA records, separate by `newline` or error message if has_mxtlsa = 0
+  - mtasts_details: published MTA STS TXT records, separate by newline
   Published records are not validated.
 '''
-import sys
+from typing import List, Tuple
 import dns.resolver
 import argparse
 
-def validmx(mx):
+def validmx(mx: str) -> bool:
     '''
     Return False for MX records that do not represent a SMTP server:
     - .:  Null MX as defined in RFC 7505 meaning that the domain doesn't accept any email.
@@ -30,7 +32,7 @@ def validmx(mx):
         case _:
             return True
         
-def lookupmx(resolver, domain):
+def lookupmx(resolver: dns.resolver.Resolver, domain: str) -> Tuple[List[str], bool, str]:
     '''
     Return a tuple consiting of
     - list of valid MX domains, ordered by priority (and alphabetically), removing invalid MX
@@ -59,7 +61,7 @@ def lookupmx(resolver, domain):
         error = str(e)
     return mxs, authenticated, error
 
-def lookuptlsa(resolver, domain, port, delimiter):
+def lookuptlsa(resolver: dns.resolver.Resolver, domain: str, port: int, delimiter: str) -> Tuple[int, str]:
     '''
     Lookup TLSA record for domain and port
     Return
@@ -76,19 +78,20 @@ def lookuptlsa(resolver, domain, port, delimiter):
         error = str(e)
     return 0, error
 
-def indicator(b):
+def indicator(b: bool) -> int:
+    '''return bool encoded as int'''
     if (b):
         return 1
     else:
         return 0
     
-def is_sts(txt):
+def is_sts(txt: str) -> bool:
     '''
     Return True if s looks like a MSA STS TXT record without validating it
     '''
     return txt.lower().startswith('v=stsv1')
 
-def lookupsts(resolver, domain, delimiter):
+def lookupsts(resolver: dns.resolver.Resolver, domain: str, delimiter: str) -> Tuple[int, str]:
     '''
     Return (1, valid looking MTA STS TXT records for domain d, separated by newline)
     or (0, error details)
@@ -104,7 +107,7 @@ def lookupsts(resolver, domain, delimiter):
         return 0, str(e)
     return indicator(len(txts)), delimiter.join(txts)
 
-def lookupdomain(resolver, domain, delimiter):
+def lookupdomain(resolver: dns.resolver.Resolver, domain: str, delimiter: str) -> None:
     '''
     Print CSV record for domain d
     '''
@@ -127,7 +130,7 @@ def lookupdomain(resolver, domain, delimiter):
     stsflag, stsdetails = lookupsts(resolver, domain, delimiter)
     print(f'{domain},{indicator(len(mxs))},{indicator(mxauth)},{mxtlsaflag},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{mxtlsadetails}","{stsdetails}"', flush=True)
 
-def parse_args(resolver):
+def parse_args(resolver: dns.resolver.Resolver) -> argparse.Namespace:
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
                                         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     argparser.add_argument('domains', nargs='*',
@@ -148,7 +151,7 @@ def parse_args(resolver):
     opts.delimiter = bytes(opts.delimiter, 'utf-8').decode('unicode_escape') # https://docs.python.org/3/library/codecs.html#python-specific-encodings
     return opts
 
-def configure_resolver(resolver, opts):
+def configure_resolver(resolver: dns.resolver.Resolver, opts: argparse.Namespace):
     if opts.nameserver:
         resolver.nameservers = opts.nameserver
     resolver.timeout = opts.timeout
