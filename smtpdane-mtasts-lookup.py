@@ -107,7 +107,7 @@ def lookupsts(resolver: dns.resolver.Resolver, domain: str, delimiter: str) -> T
         return 0, str(e)
     return indicator(len(txts)), delimiter.join(txts)
 
-def lookupdomain(resolver: dns.resolver.Resolver, domain: str, delimiter: str) -> None:
+def lookupdomain(resolver: dns.resolver.Resolver, domain: str, delimiter: str, flush: bool) -> None:
     '''
     Print CSV record for domain d
     '''
@@ -128,7 +128,7 @@ def lookupdomain(resolver: dns.resolver.Resolver, domain: str, delimiter: str) -
     # DANE requires DNSSEC for MX lookup *and* TLSA for MX domain https://datatracker.ietf.org/doc/html/rfc7672#section-2.2.1
     daneflag = indicator(mxauth and mxtlsaflag)
     stsflag, stsdetails = lookupsts(resolver, domain, delimiter)
-    print(f'{domain},{indicator(len(mxs))},{indicator(mxauth)},{mxtlsaflag},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{mxtlsadetails}","{stsdetails}"', flush=True)
+    print(f'{domain},{indicator(len(mxs))},{indicator(mxauth)},{mxtlsaflag},{daneflag},{stsflag},{indicator(daneflag or stsflag)},"{mxdetails}","{mxtlsadetails}","{stsdetails}"', flush=flush)
 
 def parse_args(resolver: dns.resolver.Resolver) -> argparse.Namespace:
     argparser = argparse.ArgumentParser(description='Lookup SMTP DANE and MTA STS and output results in CSV format', 
@@ -147,6 +147,8 @@ def parse_args(resolver: dns.resolver.Resolver) -> argparse.Namespace:
                            help='use custom nameserver, repeat to add multiple')
     argparser.add_argument('-d', '--delimiter', type=str, default='\\n',
                            help='delimiter string used to concatenate records (default: %(default)s)')
+    argparser.add_argument('-f', '--flush', action='store_true',
+                           help='flush output after each line (default: no flush)')
     opts = argparser.parse_args()
     opts.delimiter = bytes(opts.delimiter, 'utf-8').decode('unicode_escape') # https://docs.python.org/3/library/codecs.html#python-specific-encodings
     return opts
@@ -167,6 +169,6 @@ if __name__ == '__main__':
         if opts.header:
             print("domain,has_mx,has_mxauth,has_mxtlsa,has_smtpdane,has_mtasts,has_any,mx_details,mxtlsa_details,mtasts_details")
         for domain in opts.domains:
-            lookupdomain(resolver, domain, opts.delimiter)
+            lookupdomain(resolver, domain, opts.delimiter, opts.flush)
     except KeyboardInterrupt:
         pass
