@@ -24,10 +24,10 @@ def validmx(mx: str) -> bool:
     '''
     Return False for MX records that do not represent a SMTP server:
     - .:  Null MX as defined in RFC 7505 meaning that the domain doesn't accept any email.
-    - 0.0.0.0. and localhost.: Sometimes used in indicate the same as .
+    - 0.0.0.0., localhost. and ~.: Sometimes used in indicate the same as .
     '''
     match mx:
-        case '.' | '0.0.0.0.' | 'localhost.':
+        case '.' | '0.0.0.0.' | 'localhost.' | '~.':
             return False
         case _:
             return True
