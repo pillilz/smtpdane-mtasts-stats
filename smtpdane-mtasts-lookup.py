@@ -160,6 +160,7 @@ def configure_resolver(resolver: dns.resolver.Resolver, opts: argparse.Namespace
     resolver.lifetime = opts.lifetime
     resolver.retry_servfail = opts.retry
     resolver.set_flags(dns.flags.RD | dns.flags.AD) # RD recursion desired, AD authenticated data
+    resolver.use_edns(True) # indicate EDNS0 support to enable UDP packages > 512 byte
 
 if __name__ == '__main__':
     resolver = dns.resolver.Resolver()
