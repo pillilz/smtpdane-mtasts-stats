@@ -16,9 +16,10 @@ Output:
   - mtasts_details: published MTA STS TXT records, separate by newline
   Published records are not validated.
 '''
+import argparse
+import functools
 from typing import List, Tuple
 import dns.resolver
-import argparse
 
 def validmx(mx: str) -> bool:
     '''
@@ -31,7 +32,7 @@ def validmx(mx: str) -> bool:
             return False
         case _:
             return True
-        
+
 def lookupmx(resolver: dns.resolver.Resolver, domain: str) -> Tuple[List[str], bool, str]:
     '''
     Return a tuple consiting of
@@ -61,6 +62,7 @@ def lookupmx(resolver: dns.resolver.Resolver, domain: str) -> Tuple[List[str], b
         error = str(e)
     return mxs, authenticated, error
 
+@functools.cache
 def lookuptlsa(resolver: dns.resolver.Resolver, domain: str, port: int, delimiter: str) -> Tuple[int, str]:
     '''
     Lookup TLSA record for domain and port
